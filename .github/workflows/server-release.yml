@@ -1,0 +1,67 @@
+name: Server Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            binary_name: monitor-server-linux-amd64
+          - goos: windows
+            goarch: amd64
+            binary_name: monitor-server-windows-amd64.exe
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build
+        run: |
+          cd Monitor_sever
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o ../${{ matrix.binary_name }} .
+
+      - name: Generate checksum
+        run: |
+          cd Monitor_sever
+          sha256sum ../${{ matrix.binary_name }} > ../${{ matrix.binary_name }}.sha256
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary_name }}
+          path: |
+            Monitor_sever/${{ matrix.binary_name }}
+            Monitor_sever/${{ matrix.binary_name }}.sha256
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ./artifacts/**/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
