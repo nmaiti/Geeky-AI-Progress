@@ -319,7 +319,7 @@ func handleAgentEvent(w http.ResponseWriter, r *http.Request) {
 }
 
 // Background worker: Marks sessions idle after 20 seconds of inactivity,
-// removable after 1 minute, and removes them entirely after 30 seconds once completed.
+// and removes them entirely after 2 minutes if completed or idle.
 func startSessionExpirationWorker() {
 	ticker := time.NewTicker(1 * time.Second)
 	for range ticker.C {
@@ -339,16 +339,8 @@ func startSessionExpirationWorker() {
 				modified = true
 			}
 
-			// Mark removable after 1 minute of inactivity
-			if !sess.Removable && !sess.LastSeen.IsZero() && now.Sub(sess.LastSeen) > 1*time.Minute {
-				sess.Removable = true
-				sessions[id] = sess
-				updatedSessions = append(updatedSessions, sess)
-				modified = true
-			}
-
-			// Remove entirely after 30 seconds once removable and completed
-			if sess.Removable && !sess.CompletedAt.IsZero() && now.Sub(sess.CompletedAt) > 30*time.Second {
+			// Remove entirely after 2 minutes if completed or idle
+			if (sess.StatusText == "Completed" || sess.StatusText == "Idle") && !sess.LastSeen.IsZero() && now.Sub(sess.LastSeen) > 2*time.Minute {
 				delete(sessions, id)
 				removedIDs = append(removedIDs, id)
 				modified = true
