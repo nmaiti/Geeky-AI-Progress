@@ -1,0 +1,16 @@
+# Git metadata
+.git/
+
+# PlatformIO build artifacts
+.pio/
+
+# IDE files
+.vscode/
+
+# OS/Editor junk
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+*.bak

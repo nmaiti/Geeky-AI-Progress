@@ -1,0 +1,42 @@
+name: ESP8266 Firmware Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cache PlatformIO packages & build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            Nodemcu_8266/.pio
+            ~/.platformio
+          key: ${{ runner.os }}-pio-${{ hashFiles('Nodemcu_8266/platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pio-
+
+      - name: Build ESP8266 Firmware via Docker
+        run: |
+          cd Nodemcu_8266
+          docker run --rm \
+            -v "$(pwd):/workspace" \
+            -w /workspace \
+            infinitecoding/platformio-for-ci:latest \
+            platformio run
+
+      - name: Upload Firmware Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp8266-firmware
+          path: |
+            Nodemcu_8266/.pio/build/nodemcuv2/firmware.bin
+            Nodemcu_8266/.pio/build/nodemcuv2/firmware.elf
+          retention-days: 30

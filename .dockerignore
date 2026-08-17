@@ -1,0 +1,20 @@
+# Git metadata
+.git/
+
+# Go backend build artifacts
+Monitor_sever/dist/
+dist/
+
+# PlatformIO build artifacts
+.pio/
+
+# IDE files
+.vscode/
+
+# OS/Editor junk
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+*.bak
