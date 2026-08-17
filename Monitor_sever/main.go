@@ -1,12 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"embed"
 	"encoding/json"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,13 @@ type SessionEvent struct {
 	Color       []int     `json:"color"`
 	Timestamp   string    `json:"timestamp"`
 	SessionID   string    `json:"session_id"`
+	ToolName    string    `json:"tool_name"`
+	Tools       []string  `json:"tools"`
+	Toolsets    []string  `json:"toolsets"`
+	Hostname    string    `json:"hostname"`
+	User        string    `json:"user"`
+	Removable   bool      `json:"removable"`
+	RawPayload  string    `json:"raw_payload"`
 	LastSeen    time.Time `json:"-"`
 	CompletedAt time.Time `json:"-"`
 }
@@ -49,6 +57,8 @@ var (
 	clients    = make(map[*websocket.Conn]bool)
 	clientsMu  sync.Mutex
 	serialPort serial.Port
+	serialMu   sync.Mutex
+	serialInited bool
 	totalLEDs  = 24 // Match your 24-LED ring size
 )
 
@@ -57,7 +67,7 @@ var upgrader = websocket.Upgrader{
 }
 
 func main() {
-	initSerial()
+	log.Println("[Server] Starting...")
 
 	// Serve Embedded UI from templates directory
 	subFS, err := fs.Sub(content, "templates")
@@ -66,48 +76,59 @@ func main() {
 	}
 	fileServer := http.FileServer(http.FS(subFS))
 	http.Handle("/", fileServer)
-
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
 	http.HandleFunc("/ws", handleWebSocket)
-	http.HandleFunc("/api/agent/event", handleAgentEvent)
+	http.Handle("/api/agent/event", http.TimeoutHandler(http.HandlerFunc(handleAgentEvent), 5*time.Second, `{"status":"timeout"}`))
 
 	// Background worker to handle completion timers and cleanup
 	go startSessionExpirationWorker()
 
+	// Serial init is non-blocking; run in background and fail silently if no device is present
+	go initSerial()
+
 	log.Println("[Server] Running on http://0.0.0.0:5000")
 	if err := http.ListenAndServe("0.0.0.0:5000", nil); err != nil {
-		log.Fatal(err)
+		log.Fatalf("[Server] Failed to start: %v", err)
 	}
 }
 
 // Auto-detect serial port using USB VID:PID signatures (CH340, CP2102, FTDI)
 func initSerial() {
+	log.Println("[Serial] initSerial started")
+	serialMu.Lock()
+	defer serialMu.Unlock()
+
 	ports, err := enumerator.GetDetailedPortsList()
 	if err != nil {
-		log.Printf("[Serial Warning] Could not enumerate ports: %v", err)
-		serialPort = nil
+		log.Printf("[Serial] GetDetailedPortsList error: %v", err)
+		serialInited = true
 		return
 	}
 
 	if len(ports) == 0 {
-		log.Println("[Serial Info] No serial ports found. Running in software-only mode.")
-		serialPort = nil
+		log.Println("[Serial] No ports found")
+		serialInited = true
 		return
 	}
 
+	log.Printf("[Serial] Found %d ports", len(ports))
 	var targetPort string
 
 	for _, p := range ports {
 		if p.IsUSB {
 			vid := strings.ToUpper(p.VID)
 			pid := strings.ToUpper(p.PID)
-			log.Printf("[Serial Scan] Found USB Port: %s (VID:PID=%s:%s)", p.Name, vid, pid)
+			log.Printf("[Serial] USB Port: %s VID:PID=%s:%s", p.Name, vid, pid)
 
 			// Match common microcontroller USB-to-Serial bridge chips:
 			// - 1A86:7523 -> CH340 (NodeMCU / generic boards)
 			// - 10C4:EA60 -> CP2102 (ESP32 development boards)
 			// - 0403:6001 -> FTDI chips
-			if (vid == "1A86" && pid == "7523") || 
-			   (vid == "10C4" && pid == "EA60") || 
+			if (vid == "1A86" && pid == "7523") ||
+			   (vid == "10C4" && pid == "EA60") ||
 			   (vid == "0403" && pid == "6001") {
 				targetPort = p.Name
 				break
@@ -125,38 +146,53 @@ func initSerial() {
 		}
 	}
 
-	// Ultimate fallback to first system port if no USB flag is set
-	if targetPort == "" && len(ports) > 0 {
-		targetPort = ports[0].Name
-	}
-
+//	// Ultimate fallback to first system port if no USB flag is set
+//	if targetPort == "" && len(ports) > 0 {
+//		targetPort = ports[0].Name
+//	}
+//
 	if targetPort == "" {
-		log.Println("[Serial Info] No suitable serial port found. Running in software-only mode.")
-		serialPort = nil
+		log.Println("[Serial] No suitable port found")
+		serialInited = true
 		return
 	}
 
+	log.Printf("[Serial] Trying to open port: %s", targetPort)
 	mode := &serial.Mode{BaudRate: 115200}
-	var openErr error
-	serialPort, openErr = serial.Open(targetPort, mode)
-	if openErr != nil {
-		log.Printf("[Serial Error] Failed to open port %s: %v", targetPort, openErr)
+	serialPort, err = serial.Open(targetPort, mode)
+	if err != nil {
+		log.Printf("[Serial] Open failed: %v", err)
 		serialPort = nil
 	} else {
-		log.Printf("[Serial] Successfully connected to ESP device on auto-detected port: %s", targetPort)
+		log.Printf("[Serial] Successfully opened: %s", targetPort)
 	}
+	serialInited = true
+	log.Println("[Serial] initSerial finished")
 }
 
 func handleAgentEvent(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[HTTP] Received %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+
 	if r.Method != http.MethodPost {
+		log.Printf("[HTTP] Method not allowed: %s", r.Method)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
+	log.Printf("[HTTP] Decoding JSON body...")
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Printf("[HTTP] Body read error: %v", err)
+	}
+	r.Body = io.NopCloser(bytes.NewReader(rawBody))
+	rawPayload := strings.TrimSpace(string(rawBody))
+
 	var data map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+		log.Printf("[HTTP] JSON decode error: %v", err)
 		data = make(map[string]interface{})
 	}
+	log.Printf("[HTTP] Payload: %+v", data)
 
 	sessionID, _ := data["session_id"].(string)
 	if sessionID == "" {
@@ -170,13 +206,50 @@ func handleAgentEvent(w http.ResponseWriter, r *http.Request) {
 	if eventType == "" {
 		eventType = "unknown"
 	}
+	toolName, _ := data["tool_name"].(string)
+	if toolName == "" {
+		toolName = "unknown"
+	}
+
+	var tools []string
+	if t, ok := data["tools"].([]interface{}); ok {
+		for _, v := range t {
+			if s, ok := v.(string); ok && s != "" {
+				tools = append(tools, s)
+			}
+		}
+	}
+	if len(tools) == 0 {
+		tools = []string{"unknown"}
+	}
+
+	var toolsets []string
+	if t, ok := data["toolsets"].([]interface{}); ok {
+		for _, v := range t {
+			if s, ok := v.(string); ok && s != "" {
+				toolsets = append(toolsets, s)
+			}
+		}
+	}
+	if len(toolsets) == 0 {
+		toolsets = []string{"unknown"}
+	}
+
+	hostname, _ := data["hostname"].(string)
+	if hostname == "" {
+		hostname = "unknown"
+	}
+	user, _ := data["user"].(string)
+	if user == "" {
+		user = "unknown"
+	}
 
 	color := []int{99, 102, 241} // Default indigo
 	statusText := "Started"
 	isCompleted := false
 
 	if containsAny(eventType, []string{"tool", "pre", "edit", "work", "running"}) {
-		color = []int{245, 158, 11} // Amber/Gold for working
+		color = []int{34, 197, 94} // Green for working
 		statusText = "Working"
 	} else if containsAny(eventType, []string{"complete", "stop", "end"}) {
 		color = []int{16, 185, 129} // Emerald green for complete
@@ -186,6 +259,14 @@ func handleAgentEvent(w http.ResponseWriter, r *http.Request) {
 
 	sessionsMu.Lock()
 	existing, exists := sessions[sessionID]
+
+	// If session was idle, reset to working on new activity
+	if exists && existing.StatusText == "Idle" {
+		if containsAny(eventType, []string{"tool", "pre", "edit", "work", "running"}) {
+			color = []int{34, 197, 94} // Green for working
+			statusText = "Working"
+		}
+	}
 	var compTime time.Time
 	if isCompleted {
 		if exists && !existing.CompletedAt.IsZero() {
@@ -195,6 +276,11 @@ func handleAgentEvent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	removable := isCompleted
+	if exists {
+		removable = removable || existing.Removable
+	}
+
 	sessions[sessionID] = SessionEvent{
 		Source:      source,
 		EventType:   eventType,
@@ -202,33 +288,69 @@ func handleAgentEvent(w http.ResponseWriter, r *http.Request) {
 		Color:       color,
 		Timestamp:   time.Now().Format("15:04:05"),
 		SessionID:   sessionID,
+		ToolName:    toolName,
+		Tools:       tools,
+		Toolsets:    toolsets,
+		Hostname:    hostname,
+		User:        user,
+		Removable:   removable,
+		RawPayload:  rawPayload,
 		LastSeen:    time.Now(),
 		CompletedAt: compTime,
 	}
 	sessionsMu.Unlock()
 
-	payload := generateLEDPayload()
-	broadcastWebSocket(sessions[sessionID])
-	sendToSerial(payload)
-
+	// Write response FIRST before any async work
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"status": "success"})
+	log.Printf("[HTTP] Writing immediate response")
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{"status": "success"}); err != nil {
+		log.Printf("[HTTP] Response write error: %v", err)
+	}
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	log.Printf("[HTTP] Immediate response sent")
+
+	// Async work after response
+	payload := generateLEDPayload()
+	log.Printf("[HTTP] Broadcasting WebSocket and sending serial payload")
+	go broadcastWebSocket(sessions[sessionID])
+	go sendToSerial(payload)
 }
 
-// Background worker: Waits 30 seconds after completion, removes sector, and re-divides LEDs
+// Background worker: Marks sessions idle after 20 seconds of inactivity,
+// removable after 1 minute, and removes them entirely after 30 seconds once completed.
 func startSessionExpirationWorker() {
 	ticker := time.NewTicker(1 * time.Second)
 	for range ticker.C {
 		sessionsMu.Lock()
 		now := time.Now()
 		modified := false
+		var updatedSessions []SessionEvent
+		var removedIDs []string
 
 		for id, sess := range sessions {
-			if now.Sub(sess.LastSeen) > 30*time.Minute {
-				delete(sessions, id)
+			// Mark working sessions as idle after 20 seconds of inactivity
+			if sess.StatusText == "Working" && !sess.LastSeen.IsZero() && now.Sub(sess.LastSeen) > 20*time.Second {
+				sess.StatusText = "Idle"
+				sess.Color = []int{245, 158, 11} // Orange for idle
+				sessions[id] = sess
+				updatedSessions = append(updatedSessions, sess)
 				modified = true
-			} else if !sess.CompletedAt.IsZero() && now.Sub(sess.CompletedAt) > 30*time.Second {
+			}
+
+			// Mark removable after 1 minute of inactivity
+			if !sess.Removable && !sess.LastSeen.IsZero() && now.Sub(sess.LastSeen) > 1*time.Minute {
+				sess.Removable = true
+				sessions[id] = sess
+				updatedSessions = append(updatedSessions, sess)
+				modified = true
+			}
+
+			// Remove entirely after 30 seconds once removable and completed
+			if sess.Removable && !sess.CompletedAt.IsZero() && now.Sub(sess.CompletedAt) > 30*time.Second {
 				delete(sessions, id)
+				removedIDs = append(removedIDs, id)
 				modified = true
 			}
 		}
@@ -237,6 +359,12 @@ func startSessionExpirationWorker() {
 		if modified {
 			payload := generateLEDPayload()
 			sendToSerial(payload)
+			for _, sess := range updatedSessions {
+				go broadcastWebSocket(sess)
+			}
+			for _, id := range removedIDs {
+				go broadcastRemoval(id)
+			}
 		}
 	}
 }
@@ -270,18 +398,22 @@ func generateLEDPayload() LEDPayload {
 				end = totalLEDs - 1
 			}
 
-			// Animation mappings:
-			// - Working -> bounce animation with gold dot
-			// - Started / Completed -> pulse animation
-			anim := "solid"
-			dotColor := []int{255, 255, 255}
+		// Animation mappings:
+		// - Working -> bounce animation with green dot
+		// - Idle -> pulse animation with orange dot
+		// - Started / Completed -> pulse animation
+		anim := "solid"
+		dotColor := []int{255, 255, 255}
 
-			if sess.StatusText == "Working" {
-				anim = "bounce"
-				dotColor = []int{255, 220, 0}
-			} else if sess.StatusText == "Started" || sess.StatusText == "Completed" {
-				anim = "pulse"
-			}
+		if sess.StatusText == "Working" {
+			anim = "bounce"
+			dotColor = []int{255, 220, 0}
+		} else if sess.StatusText == "Idle" {
+			anim = "pulse"
+			dotColor = []int{255, 165, 0}
+		} else if sess.StatusText == "Started" || sess.StatusText == "Completed" {
+			anim = "pulse"
+		}
 
 			segments = append(segments, Segment{
 				Start:     start,
@@ -297,23 +429,32 @@ func generateLEDPayload() LEDPayload {
 }
 
 func sendToSerial(payload LEDPayload) {
-	if serialPort == nil {
+	serialMu.Lock()
+	if !serialInited || serialPort == nil {
+		serialMu.Unlock()
+		log.Println("[Serial] sendToSerial skipped: not inited or nil port")
 		return
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
+		serialMu.Unlock()
+		log.Printf("[Serial] Marshal error: %v", err)
 		return
 	}
+	log.Printf("[Serial] TX: %s", string(data))
 	_, err = serialPort.Write(append(data, '\n'))
 	if err != nil {
+		log.Printf("[Serial] Write error: %v", err)
 		serialPort.Close()
 		serialPort = nil
 	}
+	serialMu.Unlock()
 }
 
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
+		log.Printf("[WS] Upgrade error: %v", err)
 		return
 	}
 
@@ -326,11 +467,33 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		delete(clients, conn)
 		clientsMu.Unlock()
 		conn.Close()
+		log.Println("[WS] Client disconnected")
+	}()
+
+	// Send periodic pings to keep connection alive
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			clientsMu.Lock()
+			if _, ok := clients[conn]; !ok {
+				clientsMu.Unlock()
+				return
+			}
+			clientsMu.Unlock()
+			if err := conn.WriteMessage(websocket.PingMessage, []byte("keepalive")); err != nil {
+				log.Printf("[WS] Ping error: %v", err)
+				return
+			}
+		}
 	}()
 
 	for {
 		_, _, err := conn.ReadMessage()
 		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Printf("[WS] Read error: %v", err)
+			}
 			break
 		}
 	}
@@ -340,9 +503,32 @@ func broadcastWebSocket(event SessionEvent) {
 	clientsMu.Lock()
 	defer clientsMu.Unlock()
 
+	count := len(clients)
+	log.Printf("[WS] Broadcasting to %d clients", count)
 	for conn := range clients {
 		err := conn.WriteJSON(event)
 		if err != nil {
+			log.Printf("[WS] Write error: %v", err)
+			conn.Close()
+			delete(clients, conn)
+		}
+	}
+}
+
+func broadcastRemoval(sessionID string) {
+	clientsMu.Lock()
+	defer clientsMu.Unlock()
+
+	count := len(clients)
+	log.Printf("[WS] Broadcasting removal for %s to %d clients", sessionID, count)
+	for conn := range clients {
+		conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+		err := conn.WriteJSON(map[string]string{
+			"event_type": "session_removed",
+			"session_id": sessionID,
+		})
+		if err != nil {
+			log.Printf("[WS] Write error: %v", err)
 			conn.Close()
 			delete(clients, conn)
 		}

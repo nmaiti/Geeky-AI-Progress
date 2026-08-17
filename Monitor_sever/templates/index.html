@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Agent Activity Monitor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 2rem;
+            color: #38bdf8;
+            font-size: 2rem;
+        }
+
+        .status-bar {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: #1e293b;
+            border-radius: 0.5rem;
+            font-size: 0.9rem;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .sessions-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .session-card {
+            background: #1e293b;
+            border-radius: 1rem;
+            padding: 1.5rem;
+            border-left: 4px solid #3b82f6;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .session-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, rgba(56, 189, 248, 0.5), transparent);
+            animation: shimmer 3s infinite;
+        }
+
+        @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+
+        .session-card.working {
+            border-left-color: #22c55e;
+        }
+
+        .session-card.idle {
+            border-left-color: #f59e0b;
+        }
+
+        .session-card.completed {
+            border-left-color: #10b981;
+        }
+
+        .session-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1rem;
+        }
+
+        .session-header-left {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .remove-btn {
+            background: none;
+            border: none;
+            color: #64748b;
+            font-size: 1.1rem;
+            cursor: pointer;
+            padding: 0 0.25rem;
+            line-height: 1;
+            border-radius: 0.25rem;
+            transition: color 0.2s, background 0.2s;
+        }
+
+        .remove-btn:hover {
+            color: #ef4444;
+            background: #1e293b;
+        }
+
+        .session-source {
+            font-weight: 600;
+            font-size: 1.1rem;
+            color: #f1f5f9;
+        }
+
+        .session-meta {
+            font-size: 0.8rem;
+            color: #94a3b8;
+            margin-top: 0.25rem;
+        }
+
+        .session-id {
+            font-size: 0.75rem;
+            color: #64748b;
+            font-family: 'Courier New', monospace;
+            margin-top: 0.25rem;
+            word-break: break-all;
+        }
+
+        .tool-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            background: #334155;
+            border-radius: 9999px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            margin-bottom: 0.75rem;
+            color: #38bdf8;
+        }
+
+        .toolset-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .toolset-tag {
+            padding: 0.2rem 0.6rem;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 0.25rem;
+            font-size: 0.75rem;
+            color: #94a3b8;
+        }
+
+        .session-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.9rem;
+        }
+
+        .status-text {
+            text-transform: capitalize;
+            font-weight: 500;
+        }
+
+        .idle-message {
+            text-align: center;
+            color: #64748b;
+            font-size: 1.1rem;
+            padding: 3rem;
+        }
+
+        .notifications-section {
+            margin-top: 2rem;
+            background: #1e293b;
+            border-radius: 1rem;
+            padding: 1rem;
+            border: 1px solid #334155;
+        }
+
+        .notifications-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.75rem;
+            font-weight: 600;
+            color: #f1f5f9;
+        }
+
+        .clear-btn {
+            background: #334155;
+            border: none;
+            color: #e2e8f0;
+            padding: 0.25rem 0.75rem;
+            border-radius: 0.5rem;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .clear-btn:hover {
+            background: #475569;
+        }
+
+        .notifications-log {
+            max-height: 250px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .notification-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 0.75rem;
+            padding: 0.5rem 0.75rem;
+            background: #0f172a;
+            border-radius: 0.5rem;
+            border-left: 3px solid #3b82f6;
+            font-size: 0.85rem;
+            color: #e2e8f0;
+        }
+
+        .notification-item.working {
+            border-left-color: #22c55e;
+        }
+
+        .notification-item.idle {
+            border-left-color: #f59e0b;
+        }
+
+        .notification-item.completed {
+            border-left-color: #10b981;
+        }
+
+        .notification-meta {
+            font-size: 0.75rem;
+            color: #94a3b8;
+            margin-top: 0.15rem;
+        }
+
+        .notification-time {
+            font-size: 0.75rem;
+            color: #64748b;
+            white-space: nowrap;
+        }
+
+        .notification-raw {
+            margin-top: 0.5rem;
+            padding: 0.5rem;
+            background: #020617;
+            border-radius: 0.5rem;
+            border: 1px solid #1e293b;
+            font-family: 'Courier New', monospace;
+            font-size: 0.75rem;
+            color: #94a3b8;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>AI Agent Activity Monitor</h1>
+
+        <div class="status-bar">
+            <div class="status-indicator">
+                <div class="status-dot" id="ws-dot" style="background: #ef4444;"></div>
+                <span id="ws-status">Disconnected</span>
+            </div>
+            <div class="status-indicator">
+                <span>Active Sessions: <strong id="session-count">0</strong></span>
+            </div>
+        </div>
+
+        <div id="sessions-container">
+            <div class="idle-message">Waiting for agent events...</div>
+        </div>
+
+        <div class="notifications-section">
+            <div class="notifications-header">
+                <span>Notifications</span>
+                <button class="clear-btn" onclick="clearNotifications()" title="Clear">Clear</button>
+            </div>
+            <div id="notifications-log" class="notifications-log"></div>
+        </div>
+    </div>
+
+    <script>
+        const wsUrl = `ws://${window.location.host}/ws`;
+        const sessions = new Map();
+        let reconnectInterval = null;
+
+        const statusColors = {
+            'Working': { bg: '#22c55e', text: '#22c55e' },
+            'Idle': { bg: '#f59e0b', text: '#f59e0b' },
+            'Started': { bg: '#3b82f6', text: '#60a5fa' },
+            'Completed': { bg: '#10b981', text: '#34d399' }
+        };
+
+        function getStatusClass(statusText) {
+            if (statusText === 'Working') return 'working';
+            if (statusText === 'Idle') return 'idle';
+            if (statusText === 'Completed') return 'completed';
+            return '';
+        }
+
+        function renderSessions() {
+            const container = document.getElementById('sessions-container');
+            const countEl = document.getElementById('session-count');
+
+            if (sessions.size === 0) {
+                container.innerHTML = '<div class="idle-message">Waiting for agent events...</div>';
+                countEl.textContent = '0';
+                return;
+            }
+
+            countEl.textContent = sessions.size;
+            container.innerHTML = '<div class="sessions-grid">' + Array.from(sessions.values()).map(session => {
+                const colors = statusColors[session.status_text] || statusColors['Started'];
+                const statusClass = getStatusClass(session.status_text);
+                const toolsetTags = (session.toolsets || []).map(t =>
+                    `<span class="toolset-tag">${escapeHtml(t)}</span>`
+                ).join('');
+
+                return `
+                    <div class="session-card ${statusClass}">
+                        <div class="session-header">
+                            <div class="session-header-left">
+                                <div class="session-source">${escapeHtml(session.source)}</div>
+                                <div class="session-meta">${escapeHtml(session.user)}@${escapeHtml(session.hostname)}</div>
+                                <div class="session-id">${escapeHtml(session.session_id)}</div>
+                            </div>
+                            ${session.removable ? `<button class="remove-btn" onclick="removeSession('${escapeHtml(session.session_id)}')" title="Remove card">&times;</button>` : ''}
+                        </div>
+                        <div class="tool-badge">
+                            ${session.tool_name && session.tool_name !== 'unknown' ? escapeHtml(session.tool_name) : 'Unknown Tool'}
+                        </div>
+                        <div class="toolset-tags">
+                            ${toolsetTags || '<span class="toolset-tag">default</span>'}
+                        </div>
+                        <div class="session-status">
+                            <div class="status-dot" style="background: ${colors.bg};"></div>
+                            <span class="status-text" style="color: ${colors.text};">
+                                ${escapeHtml(session.status_text)}
+                            </span>
+                        </div>
+                    </div>
+                `;
+            }).join('') + '</div>';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function removeSession(sessionId) {
+            sessions.delete(sessionId);
+            renderSessions();
+        }
+
+        function addNotification(data) {
+            const log = document.getElementById('notifications-log');
+            const item = document.createElement('div');
+            item.className = 'notification-item ' + (data.status_text ? data.status_text.toLowerCase() : '');
+            
+            const toolName = data.tool_name && data.tool_name !== 'unknown' ? escapeHtml(data.tool_name) : 'Unknown Tool';
+            const source = escapeHtml(data.source || 'unknown');
+            const eventType = escapeHtml(data.event_type || 'unknown');
+            const time = escapeHtml(data.timestamp || '');
+            const sessionId = escapeHtml(data.session_id || '');
+            const rawPayload = data.raw_payload || '';
+            
+            let rawHtml = '';
+            if (rawPayload) {
+                rawHtml = `<div class="notification-raw">${escapeHtml(rawPayload)}</div>`;
+            }
+            
+            item.innerHTML = `
+                <div style="flex: 1; min-width: 0;">
+                    <div><strong>${source}</strong> · ${toolName}</div>
+                    <div class="notification-meta">${eventType} · ${sessionId}</div>
+                    ${rawHtml}
+                </div>
+                <div class="notification-time">${time}</div>
+            `;
+            
+            log.insertBefore(item, log.firstChild);
+        }
+
+        function clearNotifications() {
+            document.getElementById('notifications-log').innerHTML = '';
+        }
+
+        function connectWebSocket() {
+            const ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                document.getElementById('ws-dot').style.background = '#10b981';
+                document.getElementById('ws-status').textContent = 'Connected';
+                if (reconnectInterval) {
+                    clearInterval(reconnectInterval);
+                    reconnectInterval = null;
+                }
+            };
+
+            ws.onclose = () => {
+                document.getElementById('ws-dot').style.background = '#ef4444';
+                document.getElementById('ws-status').textContent = 'Disconnected';
+                if (!reconnectInterval) {
+                    reconnectInterval = setInterval(() => {
+                        console.log('[WS] Attempting to reconnect...');
+                        connectWebSocket();
+                    }, 2000);
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.event_type === 'session_removed') {
+                        sessions.delete(data.session_id);
+                        renderSessions();
+                        return;
+                    }
+                    sessions.set(data.session_id, {
+                        session_id: data.session_id,
+                        source: data.source,
+                        status_text: data.status_text,
+                        timestamp: data.timestamp,
+                        tool_name: data.tool_name || 'unknown',
+                        toolsets: data.toolsets || [],
+                        hostname: data.hostname || 'unknown',
+                        user: data.user || 'unknown',
+                        removable: !!data.removable
+                    });
+                    renderSessions();
+                    addNotification(data);
+                } catch (e) {
+                    console.error('Failed to parse message:', e);
+                }
+            };
+        }
+
+        connectWebSocket();
+    </script>
+</body>
+</html>

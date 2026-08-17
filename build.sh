@@ -32,7 +32,7 @@ build_linux() {
         -v "${MONITOR_DIR_WIN}:/src" \
         -w /src \
         "$IMAGE" \
-        sh -c "go build -o dist/${BINARY_NAME}-linux-amd64 ."
+        sh -c "go mod tidy && go build -o dist/${BINARY_NAME}-linux-amd64 ."
     echo "[Build] Linux binary: ${BUILD_DIR}/${BINARY_NAME}-linux-amd64"
 }
 
@@ -45,7 +45,7 @@ build_windows() {
         -e GOOS=windows \
         -e GOARCH=amd64 \
         "$IMAGE" \
-        sh -c "go build -o dist/${BINARY_NAME}-windows-amd64.exe ."
+        sh -c "go mod tidy && go build -o dist/${BINARY_NAME}-windows-amd64.exe ."
     echo "[Build] Windows binary: ${BUILD_DIR}/${BINARY_NAME}-windows-amd64.exe"
 }
 

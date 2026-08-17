@@ -22,10 +22,31 @@ print_banner() {
 # Dependency Checks
 # ==========================================
 check_dependencies() {
-    if ! command -v jq &> /dev/null; then
-        log_error "'jq' is required for payload parsing. Please install it (e.g., sudo apt install jq or pacman -S jq)."
-        exit 1
+    if command -v jq &> /dev/null; then
+        return
     fi
+
+    # On Windows Git Bash / MSYS / Cygwin, auto-download jq if missing
+    if [[ "$OSTYPE" == "msys"* || "$OSTYPE" == "cygwin"* || "$OSTYPE" == "win32"* ]]; then
+        log_info "'jq' not found. Downloading jq for Windows (amd64)..."
+        local jq_dir="$HOME/.config/ai-agent-leds/bin"
+        mkdir -p "$jq_dir"
+        local jq_bin="$jq_dir/jq.exe"
+        local jq_url="https://github.com/jqlang/jq/releases/latest/download/jq-windows-amd64.exe"
+
+        if curl -L --fail -o "$jq_bin" "$jq_url"; then
+            chmod +x "$jq_bin"
+            export PATH="$jq_dir:$PATH"
+            log_info "jq installed to $jq_bin"
+            return
+        else
+            log_error "Failed to download jq. Install it manually and retry."
+            exit 1
+        fi
+    fi
+
+    log_error "'jq' is required for payload parsing. Please install it (e.g., sudo apt install jq or pacman -S jq)."
+    exit 1
 }
 
 # ==========================================
@@ -91,23 +112,100 @@ SOURCE="${1:-unknown}"
 EVENT_TYPE="${2:-unknown}"
 
 TOOL_NAME="unknown"
-INPUT=""
+TOOLS="[]"
+TOOLSETS="[]"
+HOSTNAME="unknown"
+USER="unknown"
+ENV_CURRENT_TIME="unknown"
+ENV_WORKING_DIRECTORY="unknown"
+ENV_WORKSPACE_ROOT="unknown"
+RAW_PAYLOAD=""
 
 if [ ! -t 0 ]; then
     INPUT=$(cat)
     if command -v jq &> /dev/null; then
-        TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // .toolName // .tool // .name // "unknown"' 2>/dev/null)
+        TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // .toolName // .tool // .name // .tool.name // "unknown"' 2>/dev/null)
         if [ "$TOOL_NAME" = "null" ] || [ -z "$TOOL_NAME" ]; then
             TOOL_NAME="unknown"
         fi
+        TOOLS=$(echo "$INPUT" | jq -c '[.tools // [] | .[]? | select(type == "string")] | if length == 0 then [] else . end' 2>/dev/null)
+        TOOLSETS=$(echo "$INPUT" | jq -c '[.toolsets // [] | .[]? | select(type == "string")] | if length == 0 then [] else . end' 2>/dev/null)
+        HOSTNAME=$(echo "$INPUT" | jq -r '.hostname // empty' 2>/dev/null)
+        USER=$(echo "$INPUT" | jq -r '.user // empty' 2>/dev/null)
+        EXISTING_RAW=$(echo "$INPUT" | jq -r '.raw_payload // empty' 2>/dev/null)
+        if [ -n "$EXISTING_RAW" ] && [ "$EXISTING_RAW" != "null" ]; then
+            RAW_PAYLOAD="$EXISTING_RAW"
+        else
+            RAW_PAYLOAD="$INPUT"
+        fi
+    else
+        RAW_PAYLOAD="$INPUT"
     fi
+else
+    RAW_PAYLOAD=""
+fi
+
+if [ "$HOSTNAME" = "null" ] || [ -z "$HOSTNAME" ]; then
+    HOSTNAME=$(hostname 2>/dev/null || echo "$HOSTNAME")
+fi
+if [ "$HOSTNAME" = "null" ] || [ -z "$HOSTNAME" ]; then
+    HOSTNAME="${HOST:-unknown}"
+fi
+if [ "$HOSTNAME" = "null" ] || [ -z "$HOSTNAME" ]; then
+    HOSTNAME="unknown"
+fi
+
+if [ "$USER" = "null" ] || [ -z "$USER" ]; then
+    USER="${USERNAME:-${USER:-unknown}}"
+    if [ "$USER" = "unknown" ] && [ -n "$INPUT" ]; then
+        EXTRACTED_USER=$(echo "$INPUT" | grep -oP 'C:\\\\Users\\\\[^\\/]+' | head -n1 | sed 's/C:\\\\Users\\\\//' | sed 's/\\\\//g')
+        if [ -n "$EXTRACTED_USER" ]; then
+            USER="$EXTRACTED_USER"
+        else
+            EXTRACTED_USER=$(echo "$INPUT" | grep -oP '/home/[^\\/]+' | head -n1 | sed 's/\\/home\\///')
+            if [ -n "$EXTRACTED_USER" ]; then
+                USER="$EXTRACTED_USER"
+            else
+                EXTRACTED_USER=$(echo "$INPUT" | grep -oP 'Working directory: [A-Z]:\\\\Users\\\\[^\\/]+' | head -n1 | sed 's/Working directory: [A-Z]:\\\\Users\\\\//' | sed 's/\\\\//g')
+                if [ -n "$EXTRACTED_USER" ]; then
+                    USER="$EXTRACTED_USER"
+                fi
+            fi
+        fi
+    fi
+fi
+if [ "$USER" = "null" ] || [ -z "$USER" ]; then
+    USER="unknown"
+fi
+
+if [ -n "$INPUT" ]; then
+    ENV_CURRENT_TIME=$(echo "$INPUT" | grep -oP 'Current time: \K[^\r\n]+' | head -n1)
+    ENV_WORKING_DIRECTORY=$(echo "$INPUT" | grep -oP 'Working directory: \K[^\r\n]+' | head -n1)
+    ENV_WORKSPACE_ROOT=$(echo "$INPUT" | grep -oP 'Workspace root folder: \K[^\r\n]+' | head -n1)
+fi
+if [ "$ENV_CURRENT_TIME" = "null" ] || [ -z "$ENV_CURRENT_TIME" ]; then
+    ENV_CURRENT_TIME="unknown"
+fi
+if [ "$ENV_WORKING_DIRECTORY" = "null" ] || [ -z "$ENV_WORKING_DIRECTORY" ]; then
+    ENV_WORKING_DIRECTORY="unknown"
+fi
+if [ "$ENV_WORKSPACE_ROOT" = "null" ] || [ -z "$ENV_WORKSPACE_ROOT" ]; then
+    ENV_WORKSPACE_ROOT="unknown"
 fi
 
 PAYLOAD=$(jq -n \
   --arg src "$SOURCE" \
   --arg evt "$EVENT_TYPE" \
   --arg tool "$TOOL_NAME" \
-  '{source: $src, event_type: $evt, tool_name: $tool}')
+  --argjson tools "$TOOLS" \
+  --argjson toolsets "$TOOLSETS" \
+  --arg host "$HOSTNAME" \
+  --arg user "$USER" \
+  --arg env_time "$ENV_CURRENT_TIME" \
+  --arg env_cwd "$ENV_WORKING_DIRECTORY" \
+  --arg env_root "$ENV_WORKSPACE_ROOT" \
+  --arg raw "$RAW_PAYLOAD" \
+  '{source: $src, event_type: $evt, tool_name: $tool, tools: $tools, toolsets: $toolsets, hostname: $host, user: $user, env_current_time: $env_time, env_working_directory: $env_cwd, env_workspace_root: $env_root, raw_payload: $raw}')
 
 curl -s -X POST "$SERVER_URL" \
   -H "Content-Type: application/json" \
@@ -230,21 +328,111 @@ setup_cline_hooks() {
 
     cat << EOF > "$cline_dir/taskStart"
 #!/usr/bin/env bash
-$notify_bin cline session_start
+INPUT=\$(cat)
+TASK_ID=\$(echo "\$INPUT" | jq -r '.taskId // empty')
+HOOK_NAME=\$(echo "\$INPUT" | jq -r '.hookName // empty')
+WORKSPACE=\$(echo "\$INPUT" | jq -r '.workspaceRoots[0] // empty')
+HOSTNAME=\$(hostname 2>/dev/null || echo "unknown")
+USER="unknown"
+if [ -n "\$WORKSPACE" ]; then
+    EXTRACTED_USER=\$(echo "\$WORKSPACE" | grep -oP 'C:\\\\Users\\\\[^\\/]+' | head -n1 | sed 's/C:\\\\Users\\\\//' | sed 's/\\\\//g')
+    if [ -z "\$EXTRACTED_USER" ]; then
+        EXTRACTED_USER=\$(echo "\$WORKSPACE" | grep -oP '/home/[^\\/]+' | head -n1 | sed 's/\\/home\\///')
+    fi
+    if [ -n "\$EXTRACTED_USER" ]; then
+        USER="\$EXTRACTED_USER"
+    else
+        USER="\${USERNAME:-\${USER:-unknown}}"
+    fi
+fi
+EVENT_TYPE="session_start"
+case "\$HOOK_NAME" in
+    TaskResume) EVENT_TYPE="session_start" ;;
+    TaskComplete) EVENT_TYPE="session_end" ;;
+    TaskCancel) EVENT_TYPE="session_end" ;;
+esac
+PAYLOAD=\$(jq -n \
+  --arg src "cline" \
+  --arg evt "\$EVENT_TYPE" \
+  --arg session "\$TASK_ID" \
+  --arg host "\$HOSTNAME" \
+  --arg user "\$USER" \
+  --arg raw "\$INPUT" \
+  '{source: $src, event_type: $evt, session_id: $session, hostname: $host, user: $user, raw_payload: $raw}')
+echo "\$PAYLOAD" | "$notify_bin" cline "\$EVENT_TYPE"
 echo '{"cancel": false}'
 EOF
     chmod +x "$cline_dir/taskStart"
 
     cat << EOF > "$cline_dir/preToolUse"
 #!/usr/bin/env bash
-$notify_bin cline pre_tool_use
+INPUT=\$(cat)
+TASK_ID=\$(echo "\$INPUT" | jq -r '.taskId // empty')
+TOOL_NAME=\$(echo "\$INPUT" | jq -r '.preToolUse.tool // empty')
+WORKSPACE=\$(echo "\$INPUT" | jq -r '.workspaceRoots[0] // empty')
+HOSTNAME=\$(hostname 2>/dev/null || echo "unknown")
+USER="unknown"
+if [ -n "\$WORKSPACE" ]; then
+    EXTRACTED_USER=\$(echo "\$WORKSPACE" | grep -oP 'C:\\\\Users\\\\[^\\/]+' | head -n1 | sed 's/C:\\\\Users\\\\//' | sed 's/\\\\//g')
+    if [ -z "\$EXTRACTED_USER" ]; then
+        EXTRACTED_USER=\$(echo "\$WORKSPACE" | grep -oP '/home/[^\\/]+' | head -n1 | sed 's/\\/home\\///')
+    fi
+    if [ -n "\$EXTRACTED_USER" ]; then
+        USER="\$EXTRACTED_USER"
+    else
+        USER="\${USERNAME:-\${USER:-unknown}}"
+    fi
+fi
+if [ -z "\$TOOL_NAME" ] || [ "\$TOOL_NAME" = "null" ]; then
+    TOOL_NAME="unknown"
+fi
+PAYLOAD=\$(jq -n \
+  --arg src "cline" \
+  --arg evt "pre_tool_use" \
+  --arg session "\$TASK_ID" \
+  --arg tool "\$TOOL_NAME" \
+  --arg host "\$HOSTNAME" \
+  --arg user "\$USER" \
+  --arg raw "\$INPUT" \
+  '{source: $src, event_type: $evt, session_id: $session, tool_name: $tool, hostname: $host, user: $user, raw_payload: $raw}')
+echo "\$PAYLOAD" | "$notify_bin" cline "pre_tool_use"
 echo '{"cancel": false}'
 EOF
     chmod +x "$cline_dir/preToolUse"
 
     cat << EOF > "$cline_dir/taskCancel"
 #!/usr/bin/env bash
-$notify_bin cline session_end
+INPUT=\$(cat)
+TASK_ID=\$(echo "\$INPUT" | jq -r '.taskId // empty')
+HOOK_NAME=\$(echo "\$INPUT" | jq -r '.hookName // empty')
+WORKSPACE=\$(echo "\$INPUT" | jq -r '.workspaceRoots[0] // empty')
+HOSTNAME=\$(hostname 2>/dev/null || echo "unknown")
+USER="unknown"
+if [ -n "\$WORKSPACE" ]; then
+    EXTRACTED_USER=\$(echo "\$WORKSPACE" | grep -oP 'C:\\\\Users\\\\[^\\/]+' | head -n1 | sed 's/C:\\\\Users\\\\//' | sed 's/\\\\//g')
+    if [ -z "\$EXTRACTED_USER" ]; then
+        EXTRACTED_USER=\$(echo "\$WORKSPACE" | grep -oP '/home/[^\\/]+' | head -n1 | sed 's/\\/home\\///')
+    fi
+    if [ -n "\$EXTRACTED_USER" ]; then
+        USER="\$EXTRACTED_USER"
+    else
+        USER="\${USERNAME:-\${USER:-unknown}}"
+    fi
+fi
+EVENT_TYPE="session_end"
+case "\$HOOK_NAME" in
+    TaskResume) EVENT_TYPE="session_start" ;;
+    TaskComplete) EVENT_TYPE="session_end" ;;
+esac
+PAYLOAD=\$(jq -n \
+  --arg src "cline" \
+  --arg evt "\$EVENT_TYPE" \
+  --arg session "\$TASK_ID" \
+  --arg host "\$HOSTNAME" \
+  --arg user "\$USER" \
+  --arg raw "\$INPUT" \
+  '{source: $src, event_type: $evt, session_id: $session, hostname: $host, user: $user, raw_payload: $raw}')
+echo "\$PAYLOAD" | "$notify_bin" cline "\$EVENT_TYPE"
 echo '{"cancel": false}'
 EOF
     chmod +x "$cline_dir/taskCancel"
@@ -266,6 +454,8 @@ setup_kilo_hooks() {
     fi
 
     log_info "[Kilo] Configuring event telemetry hook in $kilo_config..."
+    log_info "[Kilo] NOTE: Kilo Code does not currently expose user-configurable lifecycle hooks."
+    log_info "[Kilo] The agentHooks config is prepared for future compatibility."
     cat << EOF > "$kilo_config"
 {
   "agentHooks": {

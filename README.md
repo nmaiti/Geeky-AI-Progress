@@ -15,14 +15,14 @@ graph TD
         CL[Cline]
     end
 
-    subgraph NativeClient ["Assistants with Native Webhooks"]
+    subgraph NativeClient ["Assistants with Native Webhooks / Limited Support"]
         KC[Kilo Code]
     end
 
     CC & CP & CL -->|Fires Hooks| NS[notify.sh Script]
     NS -->|HTTP POST JSON| GS[Go Backend Server]
     
-    KC -->|Direct HTTP POST| GS
+    KC -->|Planned via agentHooks| GS
 
     GS -->|USB Serial / VID:PID Match| HW[ESP8266 / ESP32 Board]
     HW -->|GPIO 2 / FastLED| LED[NeoPixel LED Ring]
@@ -58,7 +58,7 @@ graph TD
 │   ├── src/main.ino           # FastLED sketch for 24-LED NeoPixel ring
 │   ├── Dockerfile             # Docker build environment for Arduino/PlatformIO
 │   └── build-arduino.sh       # Docker-based Arduino build script
-├── Makefile                   # Cross-compilation build automation for Go binaries
+├── build.sh                   # Cross-compilation build script for Go binaries (replaces Makefile)
 ├── setup-hooks.sh             # Automated multi-agent hook installer and uninstaller
 └── templates/
     └── index.html             # Embedded real-time web dashboard (compiled into Go binary)
@@ -70,17 +70,24 @@ graph TD
 
 ### 1. Build the Go Backend Server
 
-Use the provided Makefile to compile statically linked binaries for your environment:
+Use the provided build script to compile statically linked binaries for your environment:
 
 ```bash
-make
+chmod +x build.sh
+./build.sh
 ```
 
 This builds both Linux and Windows binaries into the `dist/` directory. Alternatively, build individually:
 
 ```bash
-make build-linux
-make build-windows
+./build.sh linux
+./build.sh windows
+```
+
+To clean build artifacts:
+
+```bash
+./build.sh clean
 ```
 
 To run the server directly without cross-compilation:
@@ -150,7 +157,11 @@ Accepts JSON payloads from AI agent hooks. If `session_id` is omitted, events ar
   "source": "claude",
   "event_type": "pre_tool_use",
   "session_id": "abc-123",
-  "tool_name": "read_file"
+  "tool_name": "read_file",
+  "tools": ["read_file", "write_file"],
+  "toolsets": ["file-editing", "navigation"],
+  "hostname": "nbm-venus",
+  "user": "nbmai"
 }
 ```
 
@@ -162,6 +173,10 @@ Accepts JSON payloads from AI agent hooks. If `session_id` is omitted, events ar
 | `event_type` | `string` | No | Lifecycle event. Examples: `session_start`, `pre_tool_use`, `session_end`, `tool`, `edit`, `work`, `running`, `complete`, `stop`, `end`. Defaults to `unknown`. |
 | `session_id` | `string` | No | Unique session identifier. If omitted, defaults to `default-session`. |
 | `tool_name` | `string` | No | Name of the tool being invoked. Sent by `notify.sh` but not used by the backend for state decisions. Defaults to `unknown`. |
+| `tools` | `array[string]` | No | List of available tools from the agent context. Defaults to `["unknown"]`. |
+| `toolsets` | `array[string]` | No | List of active toolsets/categories from the agent context. Defaults to `["unknown"]`. |
+| `hostname` | `string` | No | Hostname of the machine sending the event. Auto-detected by `notify.sh` or sent by the agent. Defaults to `unknown`. |
+| `user` | `string` | No | Username of the user running the agent. Auto-detected by `notify.sh` or sent by the agent. Defaults to `unknown`. |
 
 #### Event Type Mapping
 
@@ -195,7 +210,12 @@ Broadcasts `SessionEvent` updates to connected dashboard clients in real time.
   "status_text": "Working",
   "color": [245, 158, 11],
   "timestamp": "14:23:05",
-  "session_id": "abc-123"
+  "session_id": "abc-123",
+  "tool_name": "read_file",
+  "tools": ["read_file", "write_file"],
+  "toolsets": ["file-editing", "navigation"],
+  "hostname": "nbm-venus",
+  "user": "nbmai"
 }
 ```
 
