@@ -86,8 +86,9 @@ func main() {
 	// Background worker to handle completion timers and cleanup
 	go startSessionExpirationWorker()
 
-	// Serial init is non-blocking; run in background and fail silently if no device is present
-	go initSerial()
+	// Serial init
+	initSerial()
+	sendToSerial(generateLEDPayload())
 
 	log.Println("[Server] Running on http://0.0.0.0:5000")
 	if err := http.ListenAndServe("0.0.0.0:5000", nil); err != nil {
@@ -340,7 +341,7 @@ func startSessionExpirationWorker() {
 			}
 
 			// Remove entirely after 2 minutes if completed or idle
-			if (sess.StatusText == "Completed" || sess.StatusText == "Idle") && !sess.LastSeen.IsZero() && now.Sub(sess.LastSeen) > 2*time.Minute {
+			if (sess.StatusText == "Completed" || sess.StatusText == "Idle") && !sess.LastSeen.IsZero() && now.Sub(sess.LastSeen) > 1*time.Minute {
 				delete(sessions, id)
 				removedIDs = append(removedIDs, id)
 				modified = true
@@ -370,49 +371,43 @@ func generateLEDPayload() LEDPayload {
 		activeList = append(activeList, sess)
 	}
 
-	numSessions := len(activeList)
+	if len(activeList) == 0 {
+		return LEDPayload{
+			TotalLEDs: totalLEDs,
+			Segments: []Segment{{
+				Start:     0,
+				End:       0,
+				Color:     []int{144, 238, 144},
+				DotColor:  []int{144, 238, 144},
+				Animation: "pulse",
+			}},
+		}
+	}
+
 	var segments []Segment
-
-	if numSessions == 0 {
-		segments = append(segments, Segment{
-			Start:     0,
-			End:       totalLEDs - 1,
-			Color:     []int{0, 100, 150},
-			DotColor:  []int{255, 255, 255},
-			Animation: "breathing",
-		})
-	} else {
-		ledsPerSession := max(1, totalLEDs/numSessions)
-		for i, sess := range activeList {
-			start := i * ledsPerSession
-			end := start + ledsPerSession - 1
-			if i == numSessions-1 {
-				end = totalLEDs - 1
-			}
-
-		// Animation mappings:
-		// - Working -> bounce animation with green dot
-		// - Idle -> pulse animation with orange dot
-		// - Started / Completed -> pulse animation
-		anim := "solid"
-		dotColor := []int{255, 255, 255}
-
-		if sess.StatusText == "Working" {
-			anim = "bounce"
-			dotColor = []int{255, 220, 0}
-		} else if sess.StatusText == "Idle" {
-			anim = "pulse"
-			dotColor = []int{255, 165, 0}
-		} else if sess.StatusText == "Started" || sess.StatusText == "Completed" {
-			anim = "pulse"
+	ledsPerSession := max(1, totalLEDs/len(activeList))
+	for i, sess := range activeList {
+		start := i * ledsPerSession
+		end := start + ledsPerSession - 1
+		if i == len(activeList)-1 {
+			end = totalLEDs - 1
 		}
 
+		if sess.StatusText == "Working" {
 			segments = append(segments, Segment{
 				Start:     start,
 				End:       end,
 				Color:     sess.Color,
-				DotColor:  dotColor,
-				Animation: anim,
+				DotColor:  []int{255, 220, 0},
+				Animation: "bounce",
+			})
+		} else {
+			segments = append(segments, Segment{
+				Start:     start,
+				End:       end,
+				Color:     sess.Color,
+				DotColor:  []int{144, 238, 144},
+				Animation: "pulse",
 			})
 		}
 	}
@@ -473,10 +468,9 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			clientsMu.Unlock()
-			if err := conn.WriteMessage(websocket.PingMessage, []byte("keepalive")); err != nil {
-				log.Printf("[WS] Ping error: %v", err)
-				return
-			}
+		if err := conn.WriteMessage(websocket.PingMessage, []byte("keepalive")); err != nil {
+			return
+		}
 		}
 	}()
 
