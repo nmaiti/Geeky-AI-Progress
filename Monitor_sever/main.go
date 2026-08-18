@@ -411,11 +411,12 @@ func generateLEDPayload() LEDPayload {
 	}
 
 	sort.Slice(activeList, func(i, j int) bool {
-		return activeList[i].SessionID < activeList[j].SessionID
+		return activeList[i].LastSeen.Before(activeList[j].LastSeen)
 	})
 
 	var segments []Segment
 	ledsPerSession := max(1, totalLEDs/len(activeList))
+	workingIdx := 0
 	for i, sess := range activeList {
 		start := i * ledsPerSession
 		end := start + ledsPerSession - 1
@@ -423,14 +424,22 @@ func generateLEDPayload() LEDPayload {
 			end = totalLEDs - 1
 		}
 
-		cs := colorSets[i%len(colorSets)]
-		segmentColor := cs.Color
-		dotColor := cs.DotColor
-		animation := "bounce"
+		var segmentColor, dotColor []int
+		var animation string
 
-		if sess.StatusText != "Working" {
-			segmentColor = dimColor(cs.Color)
-			dotColor = dimColor(cs.DotColor)
+		if sess.StatusText == "Working" {
+			cs := colorSets[workingIdx%len(colorSets)]
+			workingIdx++
+			segmentColor = cs.Color
+			dotColor = cs.DotColor
+			animation = "bounce"
+		} else if sess.StatusText == "Idle" {
+			segmentColor = []int{255, 193, 113}
+			dotColor = []int{255, 255, 255}
+			animation = "pulse"
+		} else {
+			segmentColor = []int{16, 185, 129}
+			dotColor = []int{255, 255, 255}
 			animation = "pulse"
 		}
 
@@ -444,10 +453,6 @@ func generateLEDPayload() LEDPayload {
 	}
 
 	return LEDPayload{TotalLEDs: totalLEDs, Segments: segments}
-}
-
-func dimColor(c []int) []int {
-	return []int{c[0] / 2, c[1] / 2, c[2] / 2}
 }
 
 func sendToSerial(payload LEDPayload) {

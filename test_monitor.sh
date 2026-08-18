@@ -187,8 +187,9 @@ else
 fi
 
 # --- Test 3: Four Sessions (4-Color Cycling) ---
-log_step "=== Test 3: Four Concurrent Sessions (4-Color Cycling) ==="
+log_step "=== Test 3: Four Concurrent Working Sessions (4-Color Cycling) ==="
 log_info "Sending working events for 4 sessions to verify color palette cycling..."
+log_info "Expected: 4 sessions cycle through Indigo, Green, Violet, Teal"
 
 for i in 1 2 3 4; do
     sid="sess-color-${i}"
@@ -219,7 +220,7 @@ log_step "=== Test 6: Idle Transition (20s timeout) ==="
 log_info "Waiting for Working sessions to become Idle..."
 # sess-color-1 through 5 are still "working" — they should go idle after 20s
 wait_for_idle
-log_info "After 22s, check monitor output — sessions should show 'Idle' (orange/dimmed)"
+log_info "After 22s, check monitor output — sessions should show 'Idle' (light orange, pulse)"
 run_test "Idle transition wait period" "0"
 
 # --- Test 7: Cleanup (60s removal) ---
