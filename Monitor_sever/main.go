@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/user"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -69,6 +70,16 @@ var (
 	serialInited bool
 	totalLEDs  = 24 // Match your 24-LED ring size
 )
+
+var colorSets = []struct {
+	Color    []int
+	DotColor []int
+}{
+	{Color: []int{99, 102, 241}, DotColor: []int{255, 220, 0}},  // Indigo + Yellow
+	{Color: []int{34, 197, 94}, DotColor: []int{255, 255, 255}},  // Green + White
+	{Color: []int{137, 109, 255}, DotColor: []int{255, 220, 0}}, // Violet + Yellow
+	{Color: []int{6, 230, 191}, DotColor: []int{255, 220, 0}},   // Teal + Yellow
+}
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
@@ -399,6 +410,10 @@ func generateLEDPayload() LEDPayload {
 		}
 	}
 
+	sort.Slice(activeList, func(i, j int) bool {
+		return activeList[i].SessionID < activeList[j].SessionID
+	})
+
 	var segments []Segment
 	ledsPerSession := max(1, totalLEDs/len(activeList))
 	for i, sess := range activeList {
@@ -408,26 +423,31 @@ func generateLEDPayload() LEDPayload {
 			end = totalLEDs - 1
 		}
 
-		if sess.StatusText == "Working" {
-			segments = append(segments, Segment{
-				Start:     start,
-				End:       end,
-				Color:     sess.Color,
-				DotColor:  []int{255, 220, 0},
-				Animation: "bounce",
-			})
-		} else {
-			segments = append(segments, Segment{
-				Start:     start,
-				End:       end,
-				Color:     sess.Color,
-				DotColor:  []int{144, 238, 144},
-				Animation: "pulse",
-			})
+		cs := colorSets[i%len(colorSets)]
+		segmentColor := cs.Color
+		dotColor := cs.DotColor
+		animation := "bounce"
+
+		if sess.StatusText != "Working" {
+			segmentColor = dimColor(cs.Color)
+			dotColor = dimColor(cs.DotColor)
+			animation = "pulse"
 		}
+
+		segments = append(segments, Segment{
+			Start:     start,
+			End:       end,
+			Color:     segmentColor,
+			DotColor:  dotColor,
+			Animation: animation,
+		})
 	}
 
 	return LEDPayload{TotalLEDs: totalLEDs, Segments: segments}
+}
+
+func dimColor(c []int) []int {
+	return []int{c[0] / 2, c[1] / 2, c[2] / 2}
 }
 
 func sendToSerial(payload LEDPayload) {
