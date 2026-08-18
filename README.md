@@ -195,7 +195,8 @@ Accepts JSON payloads from AI agent hooks. If `session_id` is omitted, events ar
 
 | Event Type Pattern | Status | Color | Animation |
 |--------------------|--------|-------|-----------|
-| `tool`, `pre`, `edit`, `work`, `running` | Working | Amber/Gold `[245, 158, 11]` | Bounce (ping-pong dot) |
+| `tool`, `pre`, `edit`, `work`, `running` | Working | 4-color palette - Indigo/Green/Violet/Teal | Bounce (ping-pong dot) |
+| After 20s inactivity | Idle | Dark Orange [208,73,0] | Pulse |
 | `complete`, `stop`, `end` | Completed | Emerald Green `[16, 185, 129]` | Pulse |
 | `session_start` or any other | Started | Indigo `[99, 102, 241]` | Pulse |
 | No active sessions | Idle | Breathing Cyan `[0, 100, 150]` | Breathing |
@@ -221,7 +222,7 @@ Broadcasts `SessionEvent` updates to connected dashboard clients in real time.
   "source": "claude",
   "event_type": "pre_tool_use",
   "status_text": "Working",
-  "color": [245, 158, 11],
+  "color": [99, 102, 241],
   "timestamp": "14:23:05",
   "session_id": "abc-123",
   "tool_name": "read_file",
@@ -281,9 +282,9 @@ The Go server sends newline-delimited JSON to the ESP8266 over USB Serial at **1
 ## LED Ring Behavior
 
 - **24-LED Ring**: The server and firmware are both configured for a 24-LED ring.
-- **Session Division**: When multiple sessions are active, the ring is divided evenly (one contiguous segment per session).
-- **Grace Period**: Completed sessions remain on the ring for 30 seconds before being pruned.
-- **Inactivity Timeout**: Sessions with no updates for 30 minutes are automatically removed.
+- **Session Division**: When multiple sessions are active, the ring is divided evenly. Working sessions cycle through 4 color sets (Indigo/Green/Violet/Teal), Idle uses Dark Orange, Completed uses Emerald Green.
+- **Idle Transition**: Sessions transition to Idle (dark orange) after 20 seconds of inactivity.
+- **Removal**: Idle and Completed sessions are removed from the ring after 1 minute of inactivity.
 - **Idle State**: When no sessions are active, the entire ring shows a breathing cyan animation.
 
 ---
