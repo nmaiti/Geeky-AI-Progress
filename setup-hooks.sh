@@ -358,7 +358,7 @@ PAYLOAD=\$(jq -n \
   --arg host "\$HOSTNAME" \
   --arg user "\$USER" \
   --arg raw "\$INPUT" \
-  '{source: $src, event_type: $evt, session_id: $session, hostname: $host, user: $user, raw_payload: $raw}')
+  '\{source: \$src, event_type: \$evt, session_id: \$session, hostname: \$host, user: \$user, raw_payload: \$raw}')
 echo "\$PAYLOAD" | "$notify_bin" cline "\$EVENT_TYPE"
 echo '{"cancel": false}'
 EOF
@@ -394,7 +394,7 @@ PAYLOAD=\$(jq -n \
   --arg host "\$HOSTNAME" \
   --arg user "\$USER" \
   --arg raw "\$INPUT" \
-  '{source: $src, event_type: $evt, session_id: $session, tool_name: $tool, hostname: $host, user: $user, raw_payload: $raw}')
+  '\{source: \$src, event_type: \$evt, session_id: \$session, tool_name: \$tool, hostname: \$host, user: \$user, raw_payload: \$raw}')
 echo "\$PAYLOAD" | "$notify_bin" cline "pre_tool_use"
 echo '{"cancel": false}'
 EOF
@@ -431,7 +431,7 @@ PAYLOAD=\$(jq -n \
   --arg host "\$HOSTNAME" \
   --arg user "\$USER" \
   --arg raw "\$INPUT" \
-  '{source: $src, event_type: $evt, session_id: $session, hostname: $host, user: $user, raw_payload: $raw}')
+  '\{source: \$src, event_type: \$evt, session_id: \$session, hostname: \$host, user: \$user, raw_payload: \$raw}')
 echo "\$PAYLOAD" | "$notify_bin" cline "\$EVENT_TYPE"
 echo '{"cancel": false}'
 EOF
