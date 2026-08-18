@@ -2,7 +2,7 @@
 
 # AI Agent LED Ring Monitor
 
-An IoT and software telemetry bridge that connects your favorite AI coding assistants (**Claude Code**, **GitHub Copilot CLI**, **Cline**, and **Kilo Code**) to a physical **NeoPixel LED ring** driven by an ESP8266 microcontroller, accompanied by a real-time web dashboard.
+An IoT and software telemetry bridge that connects your favorite AI coding assistants (**Claude Code**, **GitHub Copilot CLI**, **Cline**) to a physical **NeoPixel LED ring** driven by an ESP8266 microcontroller, accompanied by a real-time web dashboard.
 
 ---
 
@@ -15,14 +15,10 @@ graph TD
         CL[Cline]
     end
 
-    subgraph NativeClient ["Assistants with Native Webhooks / Limited Support"]
-        KC[Kilo Code]
-    end
 
     CC & CP & CL -->|Fires Hooks| NS[notify.sh Script]
     NS -->|HTTP POST JSON| GS[Go Backend Server]
     
-    KC -->|Planned via agentHooks| GS
 
     GS -->|USB Serial / VID:PID Match| HW[ESP8266 / ESP32 Board]
     HW -->|GPIO 2 / FastLED| LED[NeoPixel LED Ring]
@@ -186,7 +182,7 @@ Accepts JSON payloads from AI agent hooks. If `session_id` is omitted, events ar
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `source` | `string` | No | AI agent identifier. Examples: `claude`, `copilot`, `cline`, `kilo`. Defaults to `unknown`. |
+| `source` | `string` | No | AI agent identifier. Examples: `claude`, `copilot`, `cline`. Defaults to `unknown`. |
 | `event_type` | `string` | No | Lifecycle event. Examples: `session_start`, `pre_tool_use`, `session_end`, `tool`, `edit`, `work`, `running`, `complete`, `stop`, `end`. Defaults to `unknown`. |
 | `session_id` | `string` | No | Unique session identifier. If omitted, defaults to `default-session`. |
 | `tool_name` | `string` | No | Name of the tool being invoked. Sent by `notify.sh` but not used by the backend for state decisions. Defaults to `unknown`. |
@@ -294,7 +290,7 @@ The Go server sends newline-delimited JSON to the ESP8266 over USB Serial at **1
 
 ## Management & Cleanup
 
-To completely remove all added configurations, restore original JSON backups (`settings.json`, `led-monitor.json`, `kilo.jsonc`), and delete generated notification scripts, run:
+To completely remove all added configurations, restore original JSON backups (`settings.json`, `led-monitor.json`), and delete generated notification scripts, run:
 
 ```bash
 ./setup-hooks.sh -c

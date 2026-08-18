@@ -439,34 +439,6 @@ EOF
 }
 
 # ==========================================
-# 4. Kilo Code Global Config Setup (~/.config/kilo/)
-# ==========================================
-setup_kilo_hooks() {
-    local server_url="$1"
-    local kilo_dir="$HOME/.config/kilo"
-    local kilo_config="$kilo_dir/kilo.jsonc"
-
-    mkdir -p "$kilo_dir"
-
-    if [ -f "$kilo_config" ]; then
-        log_info "[Kilo] Backing up existing kilo.jsonc to kilo.jsonc.bak"
-        cp "$kilo_config" "${kilo_config}.bak"
-    fi
-
-    log_info "[Kilo] Configuring event telemetry hook in $kilo_config..."
-    log_info "[Kilo] NOTE: Kilo Code does not currently expose user-configurable lifecycle hooks."
-    log_info "[Kilo] The agentHooks config is prepared for future compatibility."
-    cat << EOF > "$kilo_config"
-{
-  "agentHooks": {
-    "url": "$server_url",
-    "enabled": true
-  }
-}
-EOF
-}
-
-# ==========================================
 # Cleanup & Backup Restoration (-c / --clean)
 # ==========================================
 clean_hooks() {
@@ -511,14 +483,6 @@ clean_hooks() {
     fi
     log_info "[Cline] Restored/cleaned hook scripts."
 
-    local kilo_config="$HOME/.config/kilo/kilo.jsonc"
-    if [ -f "${kilo_config}.bak" ]; then
-        log_info "[Kilo] Restoring kilo.jsonc from backup..."
-        mv "${kilo_config}.bak" "$kilo_config"
-    elif [ -f "$kilo_config" ]; then
-        rm -f "$kilo_config"
-    fi
-
     print_banner "Cleanup & Backup Restoration Complete!"
     exit 0
 }
@@ -543,7 +507,6 @@ main() {
     setup_claude_hooks
     setup_copilot_hooks
     setup_cline_hooks
-    setup_kilo_hooks "$server_url"
 
     print_banner "Setup Complete! Backups stored and hooks configured."
 }
