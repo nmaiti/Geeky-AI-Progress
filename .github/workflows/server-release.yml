@@ -33,12 +33,12 @@ jobs:
       - name: Build
         run: |
           cd Monitor_sever
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o ../${{ matrix.binary_name }} .
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o ${{ matrix.binary_name }} .
 
       - name: Generate checksum
         run: |
           cd Monitor_sever
-          sha256sum ../${{ matrix.binary_name }} > ../${{ matrix.binary_name }}.sha256
+          sha256sum ${{ matrix.binary_name }} > ${{ matrix.binary_name }}.sha256
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
