@@ -100,6 +100,23 @@ go run main.go
 
 The server starts on `http://0.0.0.0:5000`.
 
+### Optional: Remote SSH Reverse Tunnel
+
+The server supports a `-remote` flag to automatically establish an SSH reverse tunnel to a remote host:
+
+```bash
+cd Monitor_sever
+go run main.go -remote 192.168.1.50:5000
+```
+
+This opens port `5000` on the remote host and forwards all traffic back to the local server at `localhost:5000`. Authentication follows this order:
+
+1. SSH agent (`SSH_AUTH_SOCK`)
+2. Private keys in `~/.ssh/id_ed25519`, `~/.ssh/id_ecdsa`, `~/.ssh/id_rsa`
+3. Interactive password prompt if key-based auth fails
+
+Remote clients can then POST events to `http://192.168.1.50:5000/api/agent/event`.
+
 ---
 
 ### 2. Flash the ESP Microcontroller

@@ -4,10 +4,18 @@ import (
 	"bytes"
 	"embed"
 	"encoding/json"
+	"flag"
+	"fmt"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
+	"golang.org/x/term"
 	"io"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
+	"os"
+	"os/user"
 	"strings"
 	"sync"
 	"time"
@@ -66,8 +74,15 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
+var remoteAddr = flag.String("remote", "", "Remote SSH host:port to establish reverse tunnel (e.g. 192.168.1.50:5000)")
+
 func main() {
 	log.Println("[Server] Starting...")
+	flag.Parse()
+
+	if *remoteAddr != "" {
+		go startSSHTunnel(*remoteAddr)
+	}
 
 	// Serve Embedded UI from templates directory
 	subFS, err := fs.Sub(content, "templates")
@@ -548,4 +563,160 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func startSSHTunnel(remote string) {
+	parts := strings.SplitN(remote, ":", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		log.Fatalf("[SSH] Invalid -remote format, expected host:port (got %q)", remote)
+	}
+	host := parts[0]
+	remotePort := parts[1]
+
+	authMethods, user, err := buildKeyAuthMethods(host)
+	if err != nil {
+		log.Printf("[SSH] Key auth setup failed: %v", err)
+		return
+	}
+
+	if err := dialAndListen(host, remotePort, user, authMethods); err == nil {
+		return
+	}
+
+	if !isAuthError(err) {
+		log.Printf("[SSH] Connection failed: %v", err)
+		return
+	}
+
+	log.Println("[SSH] Key auth failed; falling back to password authentication")
+	pw, err := promptPassword(user, host)
+	if err != nil {
+		log.Printf("[SSH] Password prompt failed: %v", err)
+		return
+	}
+	authMethods = []ssh.AuthMethod{ssh.Password(pw)}
+	if err := dialAndListen(host, remotePort, user, authMethods); err != nil {
+		log.Printf("[SSH] Password auth failed: %v", err)
+	}
+}
+
+func dialAndListen(host, remotePort, user string, authMethods []ssh.AuthMethod) error {
+	addr := host
+	if !strings.Contains(addr, ":") {
+		addr += ":22"
+	}
+
+	config := &ssh.ClientConfig{
+		User:            user,
+		Auth:            authMethods,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         15 * time.Second,
+	}
+
+	conn, err := ssh.Dial("tcp", addr, config)
+	if err != nil {
+		return fmt.Errorf("ssh dial %s: %w", addr, err)
+	}
+
+	ln, err := conn.Listen("tcp", "0.0.0.0:"+remotePort)
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("remote listen :%s: %w", remotePort, err)
+	}
+
+	log.Printf("[SSH] Reverse tunnel active: remote 0.0.0.0:%s -> localhost:5000 via %s@%s", remotePort, user, host)
+
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			conn.Close()
+			return fmt.Errorf("accept: %w", err)
+		}
+		go func(rconn net.Conn) {
+			defer rconn.Close()
+			lconn, err := net.Dial("tcp", "localhost:5000")
+			if err != nil {
+				log.Printf("[SSH] local dial error: %v", err)
+				return
+			}
+			defer lconn.Close()
+			go io.Copy(lconn, rconn)
+			io.Copy(rconn, lconn)
+		}(c)
+	}
+}
+
+func buildKeyAuthMethods(remoteHost string) ([]ssh.AuthMethod, string, error) {
+	user := currentUser()
+	host := remoteHost
+	if idx := strings.Index(host, "@"); idx >= 0 {
+		user = host[:idx]
+		host = host[idx+1:]
+	}
+
+	var methods []ssh.AuthMethod
+
+	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
+		if conn, err := net.Dial("unix", sock); err == nil {
+			ag := agent.NewClient(conn)
+			if signers, err := ag.Signers(); err == nil && len(signers) > 0 {
+				methods = append(methods, ssh.PublicKeys(signers...))
+			}
+		}
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = os.Getenv("HOME")
+	}
+	keyPaths := []string{
+		home + "/.ssh/id_ed25519",
+		home + "/.ssh/id_ecdsa",
+		home + "/.ssh/id_rsa",
+	}
+	for _, p := range keyPaths {
+		if data, err := os.ReadFile(p); err == nil {
+			if signer, err := ssh.ParsePrivateKey(data); err == nil {
+				methods = append(methods, ssh.PublicKeys(signer))
+			}
+		}
+	}
+
+	return methods, user, nil
+}
+
+func currentUser() string {
+	u, err := user.Current()
+	if err != nil || u == nil || u.Username == "" {
+		if h := os.Getenv("USER"); h != "" {
+			return h
+		}
+		if h := os.Getenv("USERNAME"); h != "" {
+			return h
+		}
+		return "root"
+	}
+	return u.Username
+}
+
+func promptPassword(user, host string) (string, error) {
+	fmt.Fprintf(os.Stderr, "Password for %s@%s: ", user, host)
+	pw, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return "", err
+	}
+	return string(pw), nil
+}
+
+func isAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "permission denied") ||
+		strings.Contains(msg, "authentication failed") ||
+		strings.Contains(msg, "no supported authentication methods") ||
+		strings.Contains(msg, "too many authentication failures") ||
+		strings.Contains(msg, "auth fail")
 }
