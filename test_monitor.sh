@@ -87,8 +87,36 @@ wait_for_removal() {
 # ==========================================
 # Pre-flight Checks
 # ==========================================
-command -v curl  >/dev/null 2>&1 || { log_err "curl is required"; exit 1; }
-command -v jq    >/dev/null 2>&1 || { log_err "jq is required"; exit 1; }
+command -v curl >/dev/null 2>&1 || { log_err "curl is required"; exit 1; }
+
+# Auto-install jq if missing (mirrors setup-hooks.sh behavior)
+if ! command -v jq >/dev/null 2>&1; then
+    if [[ "$OSTYPE" == "msys"* || "$OSTYPE" == "cygwin"* || "$OSTYPE" == "win32"* ]]; then
+        # Check if jq was already installed by setup-hooks.sh
+        JQ_LOCAL="$HOME/.config/ai-agent-leds/bin/jq.exe"
+        if [ -f "$JQ_LOCAL" ]; then
+            export PATH="$HOME/.config/ai-agent-leds/bin:$PATH"
+        else
+            log_info "jq not found. Downloading jq for Windows (amd64)..."
+            jq_dir="$HOME/.config/ai-agent-leds/bin"
+            mkdir -p "$jq_dir"
+            jq_url="https://github.com/jqlang/jq/releases/latest/download/jq-windows-amd64.exe"
+            if curl -L --fail -o "$JQ_LOCAL" "$jq_url"; then
+                chmod +x "$JQ_LOCAL"
+                export PATH="$jq_dir:$PATH"
+                log_info "jq installed to $JQ_LOCAL"
+            else
+                log_err "Failed to download jq. Install it manually and retry."
+                exit 1
+            fi
+        fi
+    else
+        log_err "jq is required. Install it (e.g. sudo apt install jq)."
+        exit 1
+    fi
+fi
+
+command -v jq >/dev/null 2>&1 || { log_err "jq is required"; exit 1; }
 
 # ==========================================
 # Optionally Start Server
