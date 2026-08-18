@@ -220,7 +220,7 @@ log_step "=== Test 6: Idle Transition (20s timeout) ==="
 log_info "Waiting for Working sessions to become Idle..."
 # sess-color-1 through 5 are still "working" — they should go idle after 20s
 wait_for_idle
-log_info "After 22s, check monitor output — sessions should show 'Idle' (light orange, pulse)"
+log_info "After 22s, check monitor output — sessions should show 'Idle' (dark orange, pulse)"
 run_test "Idle transition wait period" "0"
 
 # --- Test 7: Cleanup (60s removal) ---

@@ -434,8 +434,8 @@ func generateLEDPayload() LEDPayload {
 			dotColor = cs.DotColor
 			animation = "bounce"
 		} else if sess.StatusText == "Idle" {
-			segmentColor = []int{255, 193, 113}
-			dotColor = []int{255, 255, 255}
+			segmentColor = []int{208, 73, 0}
+			dotColor = []int{255, 220, 0}
 			animation = "pulse"
 		} else {
 			segmentColor = []int{16, 185, 129}
